@@ -2,7 +2,7 @@ import numpy as np
 import copy as cp
 from utils import mad
 from starlet2d import wt_trans, wt_rec, get_wt_filters
-import iaeprojection as iaep
+import IAE_JAX
 
 
 def sgmca(X, n, **kwargs):
@@ -99,31 +99,34 @@ def sgmca(X, n, **kwargs):
 
     # Project data in starlet domain
     Xwt = wt_trans(X, nscales=nscales)
-    Xwt = np.reshape(Xwt, (m, p*(nscales+1)), order="F")
+    Xwt = np.reshape(Xwt, (m, p * (nscales + 1)), order="F")
 
     stds = None  # to remove warnings...
     if nStd is not None:
-        std_dir2wt = np.sqrt((np.sum(get_wt_filters(p, nscales)**2, axis=0)/p))
+        std_dir2wt = np.sqrt((np.sum(get_wt_filters(p, nscales) ** 2, axis=0) / p))
     else:
-        std_dir2wt = None   # to remove warnings...
+        std_dir2wt = None  # to remove warnings...
 
     maxNbAnchorPoints = 2
     if doSemiBlind:
         if type(models) is str:
             models = {models: n}
-        LearnFuncs = []
+        IAEModels = []  # contains the IAE objects
+        IAEModelsInfo = []  # contains some needed extra info for sGMCA (same order than IAEModels)
         for fname in models:
-            LearnFuncs.append(iaep.IAEProjection(Params=iaep.load_model(fname), Optim=optimProj, niter=nbItProj,
-                                                 step_size=stepSizeProj, eps_cvg=eps[2]))
-            LearnFuncs[-1].nb_sources = models[fname]
-            if LearnFuncs[-1].nb_AnchorPoints > maxNbAnchorPoints:
-                maxNbAnchorPoints = LearnFuncs[-1].nb_AnchorPoints
+            IAEModels.append(IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj, niter=nbItProj,
+                                         step_size=stepSizeProj, eps_cvg=eps[2]))
+            IAEModelsInfo.append({'nb_sources': models[fname],
+                                  'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0]})
+            if IAEModelsInfo[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
+                maxNbAnchorPoints = IAEModelsInfo[-1]['nb_AnchorPoints']
     else:
-        LearnFuncs = None  # to remove warnings...
+        IAEModels = None  # to remove warnings...
+        IAEModelsInfo = None
 
     # Mixing matrix initialization
     if AInit is None:
-        R = np.dot(Xwt[:, :p*nscales], Xwt[:, :p*nscales].T)  # only take into account detail scales
+        R = np.dot(Xwt[:, :p * nscales], Xwt[:, :p * nscales].T)  # only take into account detail scales
         D, V = np.linalg.eig(R)
         A = V[:, 0:n].real
         step = 1
@@ -136,14 +139,14 @@ def sgmca(X, n, **kwargs):
     A /= np.maximum(np.linalg.norm(A, axis=0), 1e-9)
 
     A_old = A.copy()
-    S_old = np.zeros((n, p*(nscales+1)))
+    S_old = np.zeros((n, p * (nscales + 1)))
 
     while True:
 
         it += 1
 
         if verb >= 2:
-            print("Iteration #", it+1)
+            print("Iteration #", it + 1)
 
         # --- Estimate the sources
 
@@ -156,15 +159,15 @@ def sgmca(X, n, **kwargs):
         piA = np.dot(iRa, A.T)
         S = piA @ Xwt
         if nStd is not None:
-            stds = np.sqrt(np.diag(piA@piA.T))*nStd
+            stds = np.sqrt(np.diag(piA @ piA.T)) * nStd
 
         if step == 3 and not thrEnd:
-            S = piA@X
+            S = piA @ X
             return A, S
 
         # Thresholding
 
-        K = np.minimum(K_max/(nbItMin1/2-1)*(it+1), K_max)
+        K = np.minimum(K_max / (nbItMin1 / 2 - 1) * (it + 1), K_max)
         if step == 3:
             K = 1
         if verb >= 3:
@@ -172,26 +175,26 @@ def sgmca(X, n, **kwargs):
 
         for i in range(n):
             for j in range(nscales):
-                Swtij = S[i, p*j:p*(j+1)]
-                Swt_rwij = S_old[i, p*j:p*(j+1)]
+                Swtij = S[i, p * j:p * (j + 1)]
+                Swt_rwij = S_old[i, p * j:p * (j + 1)]
                 if nStd is None:
                     std = mad(Swtij)
                 else:
-                    std = stds[i]*std_dir2wt[j]
+                    std = stds[i] * std_dir2wt[j]
                 thrd = k * std
 
                 # Support based threshold
                 if K != 1:
                     npix = np.sum(abs(Swtij) - thrd > 0)
-                    Kval = np.maximum(np.int(K*npix), 5)
-                    thrd = np.partition(abs(Swtij), p-Kval)[p-Kval]
+                    Kval = np.maximum(np.int(K * npix), 5)
+                    thrd = np.partition(abs(Swtij), p - Kval)[p - Kval]
 
                 if verb >= 4:
-                    print("Threshold of source %i at scale %i: %.5e" % (i+1, j+1, thrd))
+                    print("Threshold of source %i at scale %i: %.5e" % (i + 1, j + 1, thrd))
 
                 # Adapt the threshold if reweighting demanded
                 if L1 and (K == K_max or step == 3):  # apply L1 reweighting once thresholds stabilized
-                    thrd = thrd/(np.abs(Swt_rwij)/(k*std)+1)
+                    thrd = thrd / (np.abs(Swt_rwij) / (k * std) + 1)
                 else:
                     thrd = thrd * np.ones(p)
 
@@ -199,28 +202,28 @@ def sgmca(X, n, **kwargs):
                 Swtij[(abs(Swtij) < thrd)] = 0
                 if L1:
                     indNZ = np.where(abs(Swtij) > thrd)[0]
-                    Swtij[indNZ] = Swtij[indNZ]-thrd[indNZ]*np.sign(Swtij[indNZ])
+                    Swtij[indNZ] = Swtij[indNZ] - thrd[indNZ] * np.sign(Swtij[indNZ])
 
-                S[i, p*j:p*(j+1)] = Swtij
+                S[i, p * j:p * (j + 1)] = Swtij
 
         if nnegS and K >= K_max:
-            nneg_p = wt_rec(np.reshape(S, (n, p, nscales+1), order='F')) >= 0  # locate neg samples in direct dom
-            S *= np.tile(nneg_p, nscales+1)
+            nneg_p = wt_rec(np.reshape(S, (n, p, nscales + 1), order='F')) >= 0  # locate neg samples in direct dom
+            S *= np.tile(nneg_p, nscales + 1)
 
         if step == 3:
-            S = wt_rec(np.reshape(S, (n, p, nscales+1), order='F'))  # reconstruct sources in direct domain
+            S = wt_rec(np.reshape(S, (n, p, nscales + 1), order='F'))  # reconstruct sources in direct domain
             return A, S
 
         # --- Update the mixing matrix
 
         # Least-squares
 
-        Rs = S[:, :p*nscales]@S[:, :p*nscales].T  # only take into account detail scales
+        Rs = S[:, :p * nscales] @ S[:, :p * nscales].T  # only take into account detail scales
         Us, Sigs, Vs = np.linalg.svd(Rs)
         Sigs[Sigs < np.max(Sigs) * 1e-9] = np.max(Sigs) * 1e-9
-        iRs = Vs.T@np.diag(1/Sigs)@Us.T
-        piS = np.dot(S[:, :p*nscales].T, iRs)
-        A = np.dot(Xwt[:, :p*nscales], piS)
+        iRs = Vs.T @ np.diag(1 / Sigs) @ Us.T
+        piS = np.dot(S[:, :p * nscales].T, iRs)
+        A = np.dot(Xwt[:, :p * nscales], piS)
 
         # Constraints
 
@@ -235,8 +238,8 @@ def sgmca(X, n, **kwargs):
         if step > 1:
 
             # --- Model-to-source mapping and starting point initialization
-            counter = np.array(
-                [LearnFunc.nb_sources for LearnFunc in LearnFuncs])  # nb of sources which can be mapped to each model
+            counter = np.array([IAEModelInfo['nb_sources'] for IAEModelInfo in
+                                IAEModelsInfo])  # nb of sources which can be mapped to each model
             not_mapped_sources = np.arange(n)
 
             n_alpha = 11  # nb of points along one dimension of the mesh grid
@@ -244,57 +247,58 @@ def sgmca(X, n, **kwargs):
 
             M = np.zeros((np.sum(counter), m))  # identified spectra so far
 
-            for LearnFunc in LearnFuncs:
-                LearnFunc.sources = np.array([], dtype=int)  # model-to-source mapping
-                LearnFunc.Lambda0 = np.empty((0, LearnFunc.nb_AnchorPoints))  # Lambda starting points
-                LearnFunc.Amplitude0 = np.array([])  # Amplitude starting points
+            for IAEModelInfo in IAEModelsInfo:
+                IAEModelInfo['sources'] = np.array([], dtype=int)  # model-to-source mapping
+                IAEModelInfo['Lambda0'] = np.empty((0, IAEModelInfo['nb_AnchorPoints']))  # Lambda starting points
+                IAEModelInfo['Amplitude0'] = np.array([])  # Amplitude starting points
 
             for it_map in range(np.minimum(n, np.sum(counter))):
                 # Generate the grid of dimension it_map
                 grid = [alpha_grid] * it_map
-                meshgrid = np.reshape(np.meshgrid(*grid), (it_map, n_alpha**it_map))
+                meshgrid = np.reshape(np.meshgrid(*grid), (it_map, n_alpha ** it_map))
                 # Delete samples where interference would dominate
                 meshgrid = np.delete(meshgrid, np.where(np.sum(meshgrid, axis=0) >= 1)[0], axis=1)
 
                 # Calculate the projection error of each spectra yet to associate with each model and each combination
                 # of identified spectra so far. The calculations are parallelized per model for the sake of speed.
                 Spectra = A[:, not_mapped_sources].T
-                Spectra = Spectra[np.newaxis, :, :] - (meshgrid.T@M[:it_map, :])[:, np.newaxis, :]
-                Spectra = np.reshape(Spectra, (np.shape(meshgrid)[1]*len(not_mapped_sources), m))
-                proj_errors = np.ones((np.shape(meshgrid)[1]*len(not_mapped_sources), len(LearnFuncs)))*np.inf
-                for l, LearnFunc in enumerate(LearnFuncs):
+                Spectra = Spectra[np.newaxis, :, :] - (meshgrid.T @ M[:it_map, :])[:, np.newaxis, :]
+                Spectra = np.reshape(Spectra, (np.shape(meshgrid)[1] * len(not_mapped_sources), m))
+                proj_errors = np.ones((np.shape(meshgrid)[1] * len(not_mapped_sources), len(IAEModels))) * np.inf
+                for l, IAEModel in enumerate(IAEModels):
                     if counter[l] != 0:  # check if a new source can me mapped to the current model
-                        output = LearnFunc.Fast_Interpolation(Spectra)
-                        proj_errors[:, l] = np.linalg.norm(Spectra - output['Xrec'], axis=1) / \
+                        output = IAEModel.fast_interpolation(Spectra)
+                        proj_errors[:, l] = np.linalg.norm(Spectra - output['XRec'], axis=1) / \
                                             np.linalg.norm(Spectra, axis=1)
                 if nnegA:
                     proj_errors[np.sum(Spectra, axis=1) <= 0.5, :] = np.inf  # remove cases with too many neg. coeff.
-                proj_errors = np.reshape(proj_errors, (np.shape(meshgrid)[1], len(not_mapped_sources), len(LearnFuncs)))
+                proj_errors = np.reshape(proj_errors, (np.shape(meshgrid)[1], len(not_mapped_sources), len(IAEModels)))
 
                 # Identify the couple source-model with the lowest projection error
                 i, j, l = np.unravel_index(np.argmin(proj_errors), np.shape(proj_errors))
                 alpha = meshgrid[:,
-                        np.unravel_index(np.argmin(proj_errors[:, j, :]), (np.shape(meshgrid)[1], len(LearnFuncs)))[0]]
+                        np.unravel_index(np.argmin(proj_errors[:, j, :]), (np.shape(meshgrid)[1], len(IAEModels)))[0]]
                 spectrum = A[:, not_mapped_sources[j]] - alpha @ M[:it_map, :]  # spectrum free of interference
-                output = LearnFuncs[l].Fast_Interpolation(spectrum)
+                output = IAEModels[l].fast_interpolation(spectrum[np.newaxis, :])
 
                 # Save the identified spectrum, the source-to-model map and the starting point
-                M[it_map, :] = np.squeeze(output['Xrec'])
-                LearnFuncs[l].sources = np.append(LearnFuncs[l].sources, np.int(not_mapped_sources[j]))
+                M[it_map, :] = np.squeeze(output['XRec'])
+                IAEModelsInfo[l]['sources'] = np.append(IAEModelsInfo[l]['sources'], np.int(not_mapped_sources[j]))
                 counter[l] -= 1
-                LearnFuncs[l].Lambda0 = np.vstack([LearnFuncs[l].Lambda0, output['Weight']])
-                LearnFuncs[l].Amplitude0 = np.append(LearnFuncs[l].Amplitude0, output['Amplitude'])
+                IAEModelsInfo[l]['Lambda0'] = np.vstack([IAEModelsInfo[l]['Lambda0'], output['Lambda']])
+                IAEModelsInfo[l]['Amplitude0'] = np.append(IAEModelsInfo[l]['Amplitude0'], output['Amplitude'])
                 not_mapped_sources = np.delete(not_mapped_sources, j)
 
             # --- Application of the model-based constraint
-            for LearnFunc in LearnFuncs:
-                output = LearnFunc.BarycentricSpan_Projection(A[:, LearnFunc.sources].T, Lambda0=LearnFunc.Lambda0,
-                                                              Amplitude0=LearnFunc.Amplitude0)
-                A[:, LearnFunc.sources] = cp.copy(cp.copy(output['Rec'].T))
+            for l, IAEModel in enumerate(IAEModels):
+                output = IAEModel.barycentric_span_projection(A[:, IAEModelsInfo[l]['sources']].T,
+                                                              Lambda0=IAEModelsInfo[l]['Lambda0'],
+                                                              Amplitude0=IAEModelsInfo[l]['Amplitude0'])
+                A[:, IAEModelsInfo[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
 
         # --- Post processing
 
-        delta_S = np.sqrt(np.sum((S-S_old)**2) / np.sum(S**2))
+        delta_S = np.sqrt(np.sum((S - S_old) ** 2) / np.sum(S ** 2))
         S_old = S.copy()
 
         delta_A = np.max(abs(1. - abs(np.sum(A * A_old, axis=0))))  # angular variations
@@ -304,19 +308,19 @@ def sgmca(X, n, **kwargs):
         if verb >= 2:
             print("delta_S = %.2e - delta_A = %.2e - cond(A) = %.2f" % (delta_S, delta_A, cond_A))
 
-        if step == 1 and it >= nbItMin1 and (delta_S <= eps[0] or it >= nbItMin1*2):
+        if step == 1 and it >= nbItMin1 and (delta_S <= eps[0] or it >= nbItMin1 * 2):
             if verb:
                 print('End of step 1')
             end_step1 = it
             if doSemiBlind:
                 step = 2
                 if verb:
-                    for LearnFunc in LearnFuncs:
-                        LearnFunc.verb = True
+                    for IAEModel in IAEModels:
+                        IAEModel.verb = True
             else:
                 step = 3
 
-        elif step == 2 and it > end_step1+1 and (delta_S <= eps[1] or it == end_step1+nbItMax2):
+        elif step == 2 and it > end_step1 + 1 and (delta_S <= eps[1] or it == end_step1 + nbItMax2):
             if verb:
                 print('End of step 2')
             step = 3

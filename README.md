@@ -1,6 +1,6 @@
 # sGMCA
 
-The sGMCA algorithm (Semi-blind Generalized Morphological Component Analysis) aims at solving Semi-Blind Source Separation (sBSS) problems, in which the spectra of the sought-after sources are constrained to belong to an unknown, physics-based, manifold. To that end, the Interpolatory AutoEncoder (IAE) framework is employed (*TODO: add ref and GitHub repo link*).
+The sGMCA algorithm (Semi-blind Generalized Morphological Component Analysis) aims at solving Semi-Blind Source Separation (sBSS) problems, in which the spectra of the sought-after sources are constrained to belong to an unknown, physics-based, manifold. To that end, the  [Interpolatory AutoEncoder (IAE)](https://github.com/jbobin/IAE) framework is employed.
  
 ## Contents
 1. [Introduction](#intro)
@@ -115,8 +115,7 @@ A, S = sgmca(X=X, n=4, nStd=1e-7, models=models)
 <a name="authors"></a>
 ## Authors
 
-* Rémi Carloni Gertosio
-* Jérôme Bobin
+*TODO: add authors*
 
 <a name="ref"></a>
 ## Reference
