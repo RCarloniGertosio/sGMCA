@@ -293,7 +293,7 @@ def sgmca(X, n, **kwargs):
             for l, IAEModel in enumerate(IAEModels):
                 output = IAEModel.barycentric_span_projection(A[:, IAEModelsInfo[l]['sources']].T,
                                                               Lambda0=IAEModelsInfo[l]['Lambda0'],
-                                                              Amplitude0=IAEModelsInfo[l]['Amplitude0'])
+                                                              Amplitude0=IAEModelsInfo[l]['Amplitude0'], niter=nbItProj)
                 A[:, IAEModelsInfo[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
 
         # --- Post processing
