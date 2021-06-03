@@ -21,6 +21,8 @@ def sgmca(X, n, **kwargs):
         number of sources to be estimated
     AInit: np.ndarray
         (m,n) float array, initial value for the mixing matrix. If None, GMCA-based initialization.
+    ARef: np.ndarray
+        (m,n_ref) or (m,) float array, reference spectra of the mix. matrix, they are fixed during step #1 (0<n_ref<n)
     nbItMin1: int
         minimum number of iterations for step #1
     nnegA: bool
@@ -68,6 +70,7 @@ def sgmca(X, n, **kwargs):
 
     # Initialize given parameters
     AInit = kwargs.get('AInit', None)
+    ARef = kwargs.get('ARef', None)
     nbItMin1 = kwargs.get('nbItMin1', 100)
     nneg = kwargs.get('nneg', None)
     if nneg is not None:
@@ -128,14 +131,24 @@ def sgmca(X, n, **kwargs):
     if AInit is None:
         R = np.dot(Xwt[:, :p * nscales], Xwt[:, :p * nscales].T)  # only take into account detail scales
         D, V = np.linalg.eig(R)
-        A = V[:, 0:n].real
+        A = V[:, :n].real
         step = 1
         it = -1
+        if ARef is not None:
+            if len(np.shape(ARef)) == 1:
+                n_ref = 1
+                A[:, 0] = ARef.copy()
+            else:
+                n_ref = np.shape(ARef)[1]
+                A[:, :n_ref] = ARef.copy()
+        else:
+            n_ref = 0
     else:
         A = AInit.copy()
         step = 2  # directly start with semi-blind step if A provided
         it = nbItMin1
         end_step1 = it
+        n_ref = 0
     A /= np.maximum(np.linalg.norm(A, axis=0), 1e-9)
 
     A_old = A.copy()
@@ -218,12 +231,12 @@ def sgmca(X, n, **kwargs):
 
         # Least-squares
 
-        Rs = S[:, :p * nscales] @ S[:, :p * nscales].T  # only take into account detail scales
+        Rs = S[n_ref:, :p * nscales] @ S[n_ref:, :p * nscales].T  # only take into account detail scales
         Us, Sigs, Vs = np.linalg.svd(Rs)
         Sigs[Sigs < np.max(Sigs) * 1e-9] = np.max(Sigs) * 1e-9
         iRs = Vs.T @ np.diag(1 / Sigs) @ Us.T
-        piS = np.dot(S[:, :p * nscales].T, iRs)
-        A = np.dot(Xwt[:, :p * nscales], piS)
+        piS = np.dot(S[n_ref:, :p * nscales].T, iRs)
+        A[:, n_ref:] = np.dot(Xwt[:, :p * nscales], piS)
 
         # Constraints
 
@@ -312,6 +325,7 @@ def sgmca(X, n, **kwargs):
             if verb:
                 print('End of step 1')
             end_step1 = it
+            n_ref = 0
             if doSemiBlind:
                 step = 2
                 if verb:

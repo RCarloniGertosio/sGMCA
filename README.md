@@ -87,6 +87,7 @@ Below are other parameters of the `sgmca` function, which can reasonably be assi
 | Parameter | Type                            | Information                                                                                | Default value            |
 |-----------|---------------------------------|--------------------------------------------------------------------------------------------|--------------------------|
 | `AInit`   | (m,n) float numpy.ndarray       | initial value for the mixing matrix. If None, GMCA-based initialization.                    | None                     |
+| `ARef`   | (m,n_ref) or (m,) float numpy.ndarray  | reference spectra of the mixing matrix, they are fixed during step #1 (0<n_ref<n) | None                     |
 | `nbItMin1`| int                             | minimum number of iterations for GMCA initialization                                               | 100                      |
 | `L1`      | bool                            | if False, L0 rather than L1 penalization                                                   | True                     |
 | `doSemiblind` | bool                        | perform semi-blind estimation                                                              | True                     |
