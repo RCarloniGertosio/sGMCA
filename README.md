@@ -10,7 +10,7 @@ The sGMCA algorithm (Semi-blind Generalized Morphological Component Analysis) ai
 1. [Example](#example)
 1. [Authors](#authors)
 1. [Reference](#ref)
-<!--1. [License](#license)-->
+1. [License](#license)
 
 <a name="intro"></a>
 ## Introduction
@@ -125,9 +125,7 @@ A, S = sgmca(X=X, n=4, nStd=1e-7, models=models)
 
 *TODO: add ref*
 
-<!--
 <a name="license"></a>
 ## License
 
 This project is licensed under the LGPL-3.0 License.
--->
