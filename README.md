@@ -90,7 +90,7 @@ Below are other parameters of the `sgmca` function, which can reasonably be assi
 | `ARef`   | (m,n_ref) or (m,) float numpy.ndarray  | reference spectra of the mixing matrix, they are fixed during step #1 (0<n_ref<n) | None                     |
 | `nbItMin1`| int                             | minimum number of iterations for GMCA initialization                                               | 100                      |
 | `L1`      | bool                            | if False, L0 rather than L1 penalization                                                   | True                     |
-| `doSemiblind` | bool                        | perform semi-blind estimation                                                              | True                     |
+| `doSemiBlind` | bool                        | perform semi-blind estimation                                                              | True                     |
 | `nbItMax2`| int                             | maximum number of sGMCA iterations                                                         | 50                       |
 | `optimProj`| int                            | descent algorithm of the model constraint (0: Adam, 1: Momentum, 2: RMSProp, 3: AdaGrad, 4: Nesterov, 5: SGD) | 3      |
 | `nbItProj`| int                            | maximum number of iterations of the descent algorithm of the model constraint                 | 1000                     |
