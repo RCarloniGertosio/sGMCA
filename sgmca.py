@@ -111,19 +111,23 @@ def sgmca(X, n, **kwargs):
         std_dir2wt = None  # to remove warnings...
 
     maxNbAnchorPoints = 2
+    if doSemiBlind and np.all([nb_sources <= 0 for nb_sources in models.values()]):
+        print('Warning! doSemiBlind is True, but no model is applied. Consequently, doSemiBlind is set to False.')
+        doSemiBlind = False
     if doSemiBlind:
         if type(models) is str:
             models = {models: n}
         IAEModels = []  # contains the IAE objects
         IAEModelsInfo = []  # contains some needed extra info for sGMCA (same order than IAEModels)
         for fname in models:
-            IAEModels.append(IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj, niter=nbItProj,
-                                         step_size=stepSizeProj, eps_cvg=eps[2]))
-            IAEModelsInfo.append({'nb_sources': models[fname],
-                                  'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0],
-                                  'fname': fname})
-            if IAEModelsInfo[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
-                maxNbAnchorPoints = IAEModelsInfo[-1]['nb_AnchorPoints']
+            if models[fname] > 0:
+                IAEModels.append(IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj, niter=nbItProj,
+                                             step_size=stepSizeProj, eps_cvg=eps[2]))
+                IAEModelsInfo.append({'nb_sources': models[fname],
+                                      'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0],
+                                      'fname': fname})
+                if IAEModelsInfo[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
+                    maxNbAnchorPoints = IAEModelsInfo[-1]['nb_AnchorPoints']
     else:
         IAEModels = None  # to remove warnings...
         IAEModelsInfo = None
@@ -310,10 +314,12 @@ def sgmca(X, n, **kwargs):
 
             # --- Application of the model-based constraint
             for l, IAEModel in enumerate(IAEModels):
-                output = IAEModel.barycentric_span_projection(A[:, IAEModelsInfo[l]['sources']].T,
-                                                              Lambda0=IAEModelsInfo[l]['Lambda0'],
-                                                              Amplitude0=IAEModelsInfo[l]['Amplitude0'], niter=nbItProj)
-                A[:, IAEModelsInfo[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
+                if len(IAEModelsInfo[l]['sources']) != 0:
+                    output = IAEModel.barycentric_span_projection(A[:, IAEModelsInfo[l]['sources']].T,
+                                                                  Lambda0=IAEModelsInfo[l]['Lambda0'],
+                                                                  Amplitude0=IAEModelsInfo[l]['Amplitude0'],
+                                                                  niter=nbItProj)
+                    A[:, IAEModelsInfo[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
 
         # --- Post processing
 
