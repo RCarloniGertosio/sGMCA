@@ -120,7 +120,8 @@ def sgmca(X, n, **kwargs):
             IAEModels.append(IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj, niter=nbItProj,
                                          step_size=stepSizeProj, eps_cvg=eps[2]))
             IAEModelsInfo.append({'nb_sources': models[fname],
-                                  'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0]})
+                                  'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0],
+                                  'fname': fname})
             if IAEModelsInfo[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
                 maxNbAnchorPoints = IAEModelsInfo[-1]['nb_AnchorPoints']
     else:
@@ -293,6 +294,11 @@ def sgmca(X, n, **kwargs):
                         np.unravel_index(np.argmin(proj_errors[:, j, :]), (np.shape(meshgrid)[1], len(IAEModels)))[0]]
                 spectrum = A[:, not_mapped_sources[j]] - alpha @ M[:it_map, :]  # spectrum free of interference
                 output = IAEModels[l].fast_interpolation(spectrum[np.newaxis, :])
+                if verb == 3:
+                    print('Source #%i associated with model %s' % (not_mapped_sources[j], IAEModelsInfo[l]['fname']))
+                elif verb >= 4:
+                    print('Source #%i associated with model %s (fast interpolation error: %.2e)'
+                          % (not_mapped_sources[j], IAEModelsInfo[l]['fname'], proj_errors[i, j, l]))
 
                 # Save the identified spectrum, the source-to-model map and the starting point
                 M[it_map, :] = np.squeeze(output['XRec'])
