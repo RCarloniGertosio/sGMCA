@@ -3,6 +3,7 @@ import copy as cp
 from utils import mad
 from starlet2d import wt_trans, wt_rec, get_wt_filters
 import IAE_JAX
+import matplotlib.pyplot as plt
 
 
 def sgmca(X, n, **kwargs):
@@ -46,6 +47,9 @@ def sgmca(X, n, **kwargs):
     models: dict or str
         models of the spectra of A. Either is a dict of str: int (str is the model filename and int the nb of
         components following the model) or a str (same model applied to all components)
+    manualMapping: bool
+        operate the model-to-source mapping manually. In that case, the entries of models (i.e. the nb of components
+         following each model) are ignored.
     nbItMax2: int
         maximum number of iterations for step #2
     optimProj: int
@@ -88,6 +92,7 @@ def sgmca(X, n, **kwargs):
     models = kwargs.get('models', None)
     if models is None and doSemiBlind:
         raise ValueError('models must be provided if doSemiBlind')
+    manualMapping = kwargs.get('manualMapping', False)
     nbItMax2 = kwargs.get('nbItMax2', 50)
     nbItProj = kwargs.get('nbItProj', 1000)
     optimProj = kwargs.get('optimProj', 3)  # AdaGrad algorithm
@@ -111,26 +116,26 @@ def sgmca(X, n, **kwargs):
         std_dir2wt = None  # to remove warnings...
 
     maxNbAnchorPoints = 2
-    if doSemiBlind and np.all([nb_sources <= 0 for nb_sources in models.values()]):
+    if doSemiBlind and np.all([nb_sources <= 0 for nb_sources in models.values()]) and not manualMapping:
         print('Warning! doSemiBlind is True, but no model is applied. Consequently, doSemiBlind is set to False.')
         doSemiBlind = False
     if doSemiBlind:
         if type(models) is str:
             models = {models: n}
-        IAEModels = []  # contains the IAE objects
-        IAEModelsInfo = []  # contains some needed extra info for sGMCA (same order than IAEModels)
+        IAEModels = []  # contains the IAE objects and some needed extra info for sGMCA
         for fname in models:
-            if models[fname] > 0:
-                IAEModels.append(IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj, niter=nbItProj,
-                                             step_size=stepSizeProj, eps_cvg=eps[2]))
-                IAEModelsInfo.append({'nb_sources': models[fname],
-                                      'nb_AnchorPoints': np.shape(IAEModels[-1].AnchorPoints)[0],
-                                      'fname': fname})
-                if IAEModelsInfo[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
-                    maxNbAnchorPoints = IAEModelsInfo[-1]['nb_AnchorPoints']
+            if models[fname] > 0 or manualMapping:
+                IAEModels.append({'model': IAE_JAX.IAE(Model=IAE_JAX.load_model(fname), optim_proj=optimProj,
+                                                       niter=nbItProj, step_size=stepSizeProj, eps_cvg=eps[2]),
+                                  'nb_sources': models[fname],
+                                  'fname': fname})
+                IAEModels[-1]['nb_AnchorPoints'] = np.shape(IAEModels[-1]['model'].AnchorPoints)[0]
+                if IAEModels[-1]['nb_AnchorPoints'] > maxNbAnchorPoints:
+                    maxNbAnchorPoints = IAEModels[-1]['nb_AnchorPoints']
+        do_mapping = True
     else:
         IAEModels = None  # to remove warnings...
-        IAEModelsInfo = None
+        do_mapping = None
 
     # Mixing matrix initialization
     if AInit is None:
@@ -256,19 +261,57 @@ def sgmca(X, n, **kwargs):
         if step > 1:
 
             # --- Model-to-source mapping and starting point initialization
-            counter = np.array([IAEModelInfo['nb_sources'] for IAEModelInfo in
-                                IAEModelsInfo])  # nb of sources which can be mapped to each model
+
+            if manualMapping and do_mapping:
+                plt.figure(1)
+                plt.plot(A)
+                plt.legend(np.arange(m))
+                plt.grid()
+                plt.ion()
+                plt.show()
+                plt.pause(0.001)
+
+                print('*** Model-to-source mapping ***')
+                if it - end_step1 > 1:
+                    answer = input('Keep the previous mapping for all next iterations ([y]/n)? ')
+                    do_mapping = answer.lower() in ['n', 'no']
+
+                if do_mapping:
+                    for IAEModel in IAEModels:
+                        IAEModel['man_map_sources'] = np.array([], dtype=int)  # model-to-source manual mapping
+
+                    print("The available models are '" + "', '".join(models.keys()) + "'. If you wish to keep a "
+                          "spectrum unconstrained, answer 'None'.")
+                    for spec in range(n):
+                        while True:
+                            fname = input('Map spectrum %i with which model? ' % spec)
+                            if fname.lower() == 'none':
+                                break
+                            l = [l for l in range(len(IAEModels)) if IAEModels[l]['fname'] == fname]
+                            if len(l) > 0:
+                                IAEModels[l[0]]['man_map_sources'] = np.append(IAEModels[l[0]]['man_map_sources'], spec)
+                                break
+                            print('Error, please provide a valid model name!')
+
+                plt.close(1)
+
+            if not manualMapping:
+                counter = np.array([IAEModel['nb_sources'] for IAEModel in IAEModels])  # nb of sources which can be
+                # mapped to each model
+            else:
+                counter = np.array([len(IAEModel['man_map_sources']) for IAEModel in IAEModels])
             not_mapped_sources = np.arange(n)
 
+            # A raw estimation of the leakages is performed to improve the initializations of the Lambdas
             n_alpha = 11  # nb of points along one dimension of the mesh grid
             alpha_grid = np.linspace(0, 1, 11)
 
             M = np.zeros((np.sum(counter), m))  # identified spectra so far
 
-            for IAEModelInfo in IAEModelsInfo:
-                IAEModelInfo['sources'] = np.array([], dtype=int)  # model-to-source mapping
-                IAEModelInfo['Lambda0'] = np.empty((0, IAEModelInfo['nb_AnchorPoints']))  # Lambda starting points
-                IAEModelInfo['Amplitude0'] = np.array([])  # Amplitude starting points
+            for IAEModel in IAEModels:
+                IAEModel['sources'] = np.array([], dtype=int)  # model-to-source mapping
+                IAEModel['Lambda0'] = np.empty((0, IAEModel['nb_AnchorPoints']))  # Lambda starting points
+                IAEModel['Amplitude0'] = np.array([])  # Amplitude starting points
 
             for it_map in range(np.minimum(n, np.sum(counter))):
                 # Generate the grid of dimension it_map
@@ -278,48 +321,60 @@ def sgmca(X, n, **kwargs):
                 meshgrid = np.delete(meshgrid, np.where(np.sum(meshgrid, axis=0) >= 1)[0], axis=1)
 
                 # Calculate the projection error of each spectra yet to associate with each model and each combination
-                # of identified spectra so far. The calculations are parallelized per model for the sake of speed.
+                # of identified spectra so far. The calculations are parallelized for the sake of speed.
                 Spectra = A[:, not_mapped_sources].T
                 Spectra = Spectra[np.newaxis, :, :] - (meshgrid.T @ M[:it_map, :])[:, np.newaxis, :]
                 Spectra = np.reshape(Spectra, (np.shape(meshgrid)[1] * len(not_mapped_sources), m))
                 proj_errors = np.ones((np.shape(meshgrid)[1] * len(not_mapped_sources), len(IAEModels))) * np.inf
                 for l, IAEModel in enumerate(IAEModels):
-                    if counter[l] != 0:  # check if a new source can me mapped to the current model
-                        output = IAEModel.fast_interpolation(Spectra)
+                    if counter[l] != 0:  # to save a fast_interpolation!
+                        output = IAEModel['model'].fast_interpolation(Spectra)
                         proj_errors[:, l] = np.linalg.norm(Spectra - output['XRec'], axis=1) / \
                                             np.linalg.norm(Spectra, axis=1)
                 if nnegA:
                     proj_errors[np.sum(Spectra, axis=1) <= 0.5, :] = np.inf  # remove cases with too many neg. coeff.
-                proj_errors = np.reshape(proj_errors, (np.shape(meshgrid)[1], len(not_mapped_sources), len(IAEModels)))
+                proj_errors = np.reshape(proj_errors,
+                                         (np.shape(meshgrid)[1], len(not_mapped_sources), len(IAEModels)))
 
-                # Identify the couple source-model with the lowest projection error
-                i, j, l = np.unravel_index(np.argmin(proj_errors), np.shape(proj_errors))
+                # Identify the triplet source-model-(leakage coefficients) with the lowest projection error.
+                # i is related to the leakage coefficients ("alpha"), j to the source (not_mapped_sources[j]) and l to
+                # the model (IAEModels[l])
+                if not manualMapping:
+                    i, j, l = np.unravel_index(np.argmin(proj_errors), np.shape(proj_errors))
+                else:
+                    # in this case, we keep the triplet only if it matches the provided manual mapping
+                    while True:
+                        i, j, l = np.unravel_index(np.argmin(proj_errors), np.shape(proj_errors))
+                        if not_mapped_sources[j] in IAEModels[l]['man_map_sources']:
+                            break
+                        proj_errors[i, j, l] = np.inf
                 alpha = meshgrid[:,
-                        np.unravel_index(np.argmin(proj_errors[:, j, :]), (np.shape(meshgrid)[1], len(IAEModels)))[0]]
+                        np.unravel_index(np.argmin(proj_errors[:, j, :]),
+                                         (np.shape(meshgrid)[1], len(IAEModels)))[0]]
                 spectrum = A[:, not_mapped_sources[j]] - alpha @ M[:it_map, :]  # spectrum free of interference
-                output = IAEModels[l].fast_interpolation(spectrum[np.newaxis, :])
-                if verb == 3:
-                    print('Source #%i associated with model %s' % (not_mapped_sources[j], IAEModelsInfo[l]['fname']))
-                elif verb >= 4:
+                output = IAEModels[l]['model'].fast_interpolation(spectrum[np.newaxis, :])
+                if verb == 3 and not manualMapping:
+                    print('Source #%i associated with model %s' % (not_mapped_sources[j], IAEModels[l]['fname']))
+                elif verb >= 4 and not manualMapping:
                     print('Source #%i associated with model %s (fast interpolation error: %.2e)'
-                          % (not_mapped_sources[j], IAEModelsInfo[l]['fname'], proj_errors[i, j, l]))
+                          % (not_mapped_sources[j], IAEModels[l]['fname'], proj_errors[i, j, l]))
 
                 # Save the identified spectrum, the source-to-model map and the starting point
                 M[it_map, :] = np.squeeze(output['XRec'])
-                IAEModelsInfo[l]['sources'] = np.append(IAEModelsInfo[l]['sources'], np.int(not_mapped_sources[j]))
+                IAEModels[l]['sources'] = np.append(IAEModels[l]['sources'], np.int(not_mapped_sources[j]))
                 counter[l] -= 1
-                IAEModelsInfo[l]['Lambda0'] = np.vstack([IAEModelsInfo[l]['Lambda0'], output['Lambda']])
-                IAEModelsInfo[l]['Amplitude0'] = np.append(IAEModelsInfo[l]['Amplitude0'], output['Amplitude'])
+                IAEModels[l]['Lambda0'] = np.vstack([IAEModels[l]['Lambda0'], output['Lambda']])
+                IAEModels[l]['Amplitude0'] = np.append(IAEModels[l]['Amplitude0'], output['Amplitude'])
                 not_mapped_sources = np.delete(not_mapped_sources, j)
 
             # --- Application of the model-based constraint
             for l, IAEModel in enumerate(IAEModels):
-                if len(IAEModelsInfo[l]['sources']) != 0:
-                    output = IAEModel.barycentric_span_projection(A[:, IAEModelsInfo[l]['sources']].T,
-                                                                  Lambda0=IAEModelsInfo[l]['Lambda0'],
-                                                                  Amplitude0=IAEModelsInfo[l]['Amplitude0'],
-                                                                  niter=nbItProj)
-                    A[:, IAEModelsInfo[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
+                if len(IAEModels[l]['sources']) != 0:
+                    output = IAEModel['model'].barycentric_span_projection(A[:, IAEModels[l]['sources']].T,
+                                                                           Lambda0=IAEModels[l]['Lambda0'],
+                                                                           Amplitude0=IAEModels[l]['Amplitude0'],
+                                                                           niter=nbItProj)
+                    A[:, IAEModels[l]['sources']] = cp.copy(cp.copy(output['XRec'].T))
 
         # --- Post processing
 
@@ -342,7 +397,7 @@ def sgmca(X, n, **kwargs):
                 step = 2
                 if verb:
                     for IAEModel in IAEModels:
-                        IAEModel.verb = True
+                        IAEModel['model'].verb = True
             else:
                 step = 3
 
