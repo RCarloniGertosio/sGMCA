@@ -124,7 +124,7 @@ A, S = sgmca(X=X, n=4, nStd=1e-7, models=models)
 <a name="ref"></a>
 ## Reference
 
-*TODO: add ref*
+Rémi Carloni Gertosio, Jérôme Bobin, Fabio Acero, [*Semi-Blind Source Separation with Learned Constraints*](https://doi.org/10.1016/j.sigpro.2022.108776), Signal Processing, Volume 202, 2023, 108776
 
 <a name="license"></a>
 ## License
